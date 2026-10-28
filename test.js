@@ -1,0 +1,28 @@
+// اختبار تكاملي: node test.js
+const {spawnSync,spawn}=require('child_process'),fs=require('fs'),os=require('os'),path=require('path');
+const dir=fs.mkdtempSync(path.join(os.tmpdir(),'mw-')),env={...process.env,DB_PATH:dir+'/t.db',PORT:'3999',DOCTOR_PASSWORD:'correct-horse-9'};
+spawnSync('node',['server.js','create-doctor'],{env,input:'dr\n'});
+let srv,ck='',ok=0,bad=0;const B='http://localhost:3999/api';
+const call=async(m,p,b,c=ck)=>{const r=await fetch(B+p,{method:m,headers:{'Content-Type':'application/json',cookie:c},body:b&&JSON.stringify(b)});const s=r.headers.get('set-cookie');if(s&&p==='/login')ck=s.split(';')[0];return [r.status,await r.json()]};
+const t=(n,c)=>{c?ok++:bad++;console.log((c?'✓ ':'✗ ')+n)};
+const start=()=>new Promise(r=>{srv=spawn('node',['server.js'],{env});srv.stdout.on('data',()=>r())});
+(async()=>{await start();
+  t('زائر لا يصل للإدارة',(await call('GET','/admin/appts'))[0]===401);
+  t('دخول خاطئ مرفوض',(await call('POST','/login',{username:'dr',password:'x'}))[0]===401);
+  t('دخول صحيح',(await call('POST','/login',{username:'dr',password:'correct-horse-9'}))[0]===200);
+  const {days}=(await call('GET','/days'))[1];t('أيام متاحة',days.length>0);
+  const d=days[0],sl=(await call('GET','/slots?date='+d))[1].slots;t('ساعات متاحة',sl.length>0);
+  const bk=(time,ph='0550123456')=>call('POST','/book',{name:'مريض تجريبي',phone:ph,date:d,time});
+  const rs=await Promise.all([bk(sl[0],'0550000001'),bk(sl[0],'0550000002'),bk(sl[0],'0550000003')]);
+  t('حجز متزامن: ناجح واحد فقط',rs.filter(x=>x[0]===200).length===1);
+  t('خارج الجدول مرفوض',(await bk('03:00'))[0]===409);
+  const a=(await call('GET','/admin/appts'))[1].rows[0];
+  t('تأكيد',(await call('PATCH','/admin/appts/'+a.id,{status:'confirmed'}))[0]===200);
+  t('إعلان',(await call('POST','/admin/ann',{title:'عطلة',body:'مغلق',active:true}))[0]===200&&(await call('GET','/public'))[1].ann.length===1);
+  const s=await call('PUT','/admin/settings',{days:[],start:'08:00',end:'16:00',dur:30,breaks:[]});
+  t('تغيير الجدول ينبّه ولا يحذف',s[1].conflicts.length===1&&(await call('GET','/slots?date='+d))[1].slots.length===0);
+  await call('PUT','/admin/settings',{days:[0,1,2,3,4,5,6]});
+  srv.kill();await new Promise(r=>setTimeout(r,500));await start();
+  t('البيانات باقية بعد إعادة التشغيل',(await call('POST','/login',{username:'dr',password:'correct-horse-9'}))[0]===200&&(await call('GET','/admin/appts'))[1].rows[0].status==='confirmed');
+  t('تسجيل الخروج',(await call('POST','/logout',{}))[0]===200&&(await call('GET','/admin/appts'))[0]===401);
+  srv.kill();console.log(`\n${ok} نجح، ${bad} فشل`);process.exit(bad?1:0)})();

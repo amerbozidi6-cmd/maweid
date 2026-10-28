@@ -1,0 +1,2 @@
+{"name":"mawidi","version":"1.0.0","private":true,"engines":{"node":">=22.13"},
+"scripts":{"start":"node server.js","create-doctor":"node server.js create-doctor","test":"node test.js"}}
